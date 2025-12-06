@@ -39,6 +39,58 @@ function reindex_day_no(PDO $pdo, int $tour_id): void
     }
 }
 
+// -------- Helper: upsert cost breakdown --------
+function upsert_tour_costs(PDO $pdo, int $tour_id, array $post): void
+{
+    $hasCostFields = false;
+    foreach (['cost_payload', 'cost_pax', 'cost_profit_percent', 'cost_day_count', 'cost_base_cost', 'cost_manual_profit', 'cost_profit_amount', 'cost_selling_total', 'cost_per_pax', 'cost_per_day'] as $key) {
+        if (isset($post[$key])) {
+            $hasCostFields = true;
+            break;
+        }
+    }
+    if (!$hasCostFields) return;
+
+    $payload = trim($post['cost_payload'] ?? '') ?: null;
+    $pax = max(0, (int)($post['cost_pax'] ?? 0));
+    $profit_percent = max(0.0, (float)($post['cost_profit_percent'] ?? 0));
+    $day_count = max(1, (int)($post['cost_day_count'] ?? 1));
+    $base_cost = max(0.0, (float)($post['cost_base_cost'] ?? 0));
+    $manual_profit = max(0.0, (float)($post['cost_manual_profit'] ?? 0));
+    $profit_amount = max(0.0, (float)($post['cost_profit_amount'] ?? 0));
+    $selling_total = max(0.0, (float)($post['cost_selling_total'] ?? 0));
+    $per_pax = max(0.0, (float)($post['cost_per_pax'] ?? 0));
+    $per_day = max(0.0, (float)($post['cost_per_day'] ?? 0));
+
+    $sql = "INSERT INTO tour_costs 
+            (tour_id, pax, profit_percent, day_count, base_cost, manual_profit, percent_profit_amount, selling_total, per_pax, per_day, payload)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON DUPLICATE KEY UPDATE
+              pax=VALUES(pax),
+              profit_percent=VALUES(profit_percent),
+              day_count=VALUES(day_count),
+              base_cost=VALUES(base_cost),
+              manual_profit=VALUES(manual_profit),
+              percent_profit_amount=VALUES(percent_profit_amount),
+              selling_total=VALUES(selling_total),
+              per_pax=VALUES(per_pax),
+              per_day=VALUES(per_day),
+              payload=VALUES(payload)";
+    $pdo->prepare($sql)->execute([
+        $tour_id,
+        $pax,
+        $profit_percent,
+        $day_count,
+        $base_cost,
+        $manual_profit,
+        $profit_amount,
+        $selling_total,
+        $per_pax,
+        $per_day,
+        $payload
+    ]);
+}
+
 // --------- Preload dropdown data ---------
 $countries = $pdo->query("SELECT id, COALESCE(name_th,name_en) AS name, name_en FROM countries ORDER BY name_en")->fetchAll(PDO::FETCH_ASSOC);
 $airlines  = $pdo->query("SELECT id, name, iata FROM airlines ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -200,6 +252,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
             reindex_day_no($pdo, $tour_id);
         }
 
+        // บันทึกข้อมูลต้นทุน/ราคาขาย (ถ้ามี)
+        try {
+            upsert_tour_costs($pdo, $tour_id, $_POST);
+        } catch (Throwable $e) {
+            // ไม่ต้องหยุดการสร้างโปรแกรมถ้าคำนวณไม่ถูกต้อง
+        }
+
         audit_log('tour_create', 'tours', $tour_id, [
             'code' => $code,
             'name' => $name,
@@ -338,6 +397,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit'
             'code' => $code,
             'name' => $name
         ]);
+
+        // อัปเดตข้อมูลต้นทุน/ราคาขาย (ถ้ามี)
+        try {
+            upsert_tour_costs($pdo, $id, $_POST);
+        } catch (Throwable $e) {
+            // ข้ามหากข้อมูลไม่ครบถ้วน
+        }
 
         $info = 'แก้ไขโปรแกรมทัวร์สำเร็จ';
     }
@@ -677,7 +743,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                 <ul class="mb-0"><?php foreach ($errors as $e) echo "<li>" . htmlspecialchars($e) . "</li>"; ?></ul>
             </div><?php endif; ?>
 
-        <form method="post" enctype="multipart/form-data" class="mb-4">
+        <form method="post" enctype="multipart/form-data" class="mb-4" id="tourCreateForm">
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="create">
 
@@ -805,7 +871,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                     <div class="d-flex justify-content-between flex-wrap gap-2 align-items-start">
                         <div>
                             <h5 class="mb-1">คำนวณต้นทุนและราคาขาย</h5>
-                            <p class="text-muted small mb-0">ส่วนคำนวณนี้ใช้สำหรับวางแผนค่าใช้จ่ายตามวันของโปรแกรมและราคาเสนอขาย ข้อมูลจะไม่ถูกบันทึกลงฐานข้อมูล</p>
+                            <p class="text-muted small mb-0">ส่วนคำนวณนี้ใช้สำหรับวางแผนค่าใช้จ่ายตามวันของโปรแกรมและราคาเสนอขาย ระบบจะบันทึกค่านี้ให้พร้อมโปรแกรม</p>
                         </div>
                         <button type="button" class="btn btn-outline-secondary btn-sm" id="costReset">ล้างค่า</button>
                     </div>
@@ -845,6 +911,18 @@ render_header('เพิ่มโปรแกรมทัวร์');
                     </div>
                 </div>
             </div>
+
+            <!-- Hidden fields for cost calculator submission -->
+            <input type="hidden" name="cost_payload" id="costPayload">
+            <input type="hidden" name="cost_pax" id="costPaxField">
+            <input type="hidden" name="cost_profit_percent" id="costProfitPercentField">
+            <input type="hidden" name="cost_day_count" id="costDayCountField">
+            <input type="hidden" name="cost_base_cost" id="costBaseCost">
+            <input type="hidden" name="cost_manual_profit" id="costManualProfit">
+            <input type="hidden" name="cost_profit_amount" id="costProfitAmount">
+            <input type="hidden" name="cost_selling_total" id="costSellingTotal">
+            <input type="hidden" name="cost_per_pax" id="costPerPax">
+            <input type="hidden" name="cost_per_day" id="costPerDay">
 
             <div class="d-flex justify-content-end mt-4">
                 <button type="submit" class="btn btn-primary">บันทึกโปรแกรมทัวร์</button>
@@ -1461,6 +1539,16 @@ render_header('เพิ่มโปรแกรมทัวร์');
         const costSummaryBox = document.getElementById('costSummaryBox');
         const costResetBtn = document.getElementById('costReset');
         const durationInput = document.querySelector('input[name="duration_days"]');
+        const costPayloadField = document.getElementById('costPayload');
+        const costPaxField = document.getElementById('costPaxField');
+        const costProfitPercentField = document.getElementById('costProfitPercentField');
+        const costDayCountField = document.getElementById('costDayCountField');
+        const costBaseField = document.getElementById('costBaseCost');
+        const costManualField = document.getElementById('costManualProfit');
+        const costProfitAmountField = document.getElementById('costProfitAmount');
+        const costSellingField = document.getElementById('costSellingTotal');
+        const costPerPaxField = document.getElementById('costPerPax');
+        const costPerDayField = document.getElementById('costPerDay');
 
         const formatNumber = (n) => (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -1594,6 +1682,31 @@ render_header('เพิ่มโปรแกรมทัวร์');
           <div class="small text-muted mb-0">เฉลี่ยต่อคน: ${formatNumber(perPax)} THB • เฉลี่ยต่อวัน: ${formatNumber(perDay)} THB</div>
         `;
             }
+
+            const payload = {
+                pax,
+                profitPercent: profitRate,
+                dayCount,
+                totalsPerCategory: totalsPerCat,
+                totalsPerDay,
+                baseCost,
+                manualProfit,
+                profitByPercent,
+                sellingTotal,
+                perPax,
+                perDay
+            };
+
+            if (costPayloadField) costPayloadField.value = JSON.stringify(payload);
+            if (costPaxField) costPaxField.value = pax;
+            if (costProfitPercentField) costProfitPercentField.value = profitRate;
+            if (costDayCountField) costDayCountField.value = dayCount;
+            if (costBaseField) costBaseField.value = baseCost;
+            if (costManualField) costManualField.value = manualProfit;
+            if (costProfitAmountField) costProfitAmountField.value = profitByPercent;
+            if (costSellingField) costSellingField.value = sellingTotal;
+            if (costPerPaxField) costPerPaxField.value = perPax;
+            if (costPerDayField) costPerDayField.value = perDay;
         }
 
         function syncDayCountFromDuration() {
@@ -1619,6 +1732,9 @@ render_header('เพิ่มโปรแกรมทัวร์');
         document.addEventListener('input', (e) => {
             if (e.target.classList && e.target.classList.contains('cost-input')) recalcCosts();
         });
+
+        const createForm = document.getElementById('tourCreateForm');
+        createForm?.addEventListener('submit', () => recalcCosts());
 
         durationInput?.addEventListener('input', () => {
             syncDayCountFromDuration();
