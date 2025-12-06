@@ -54,13 +54,18 @@ function ensure_tour_costs_table(PDO $pdo): void
         selling_total DECIMAL(12,2) NOT NULL DEFAULT 0,
         per_pax DECIMAL(12,2) NOT NULL DEFAULT 0,
         per_day DECIMAL(12,2) NOT NULL DEFAULT 0,
-        payload JSON,
+        payload LONGTEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (tour_id) REFERENCES tours(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
-    $pdo->exec($sql);
+    try {
+        $pdo->exec($sql);
+    } catch (Throwable $e) {
+        error_log('tour_costs table create failed: ' . $e->getMessage());
+        throw $e;
+    }
 }
 
 function upsert_tour_costs(PDO $pdo, int $tour_id, array $post): void
@@ -101,7 +106,7 @@ function upsert_tour_costs(PDO $pdo, int $tour_id, array $post): void
               per_pax=VALUES(per_pax),
               per_day=VALUES(per_day),
               payload=VALUES(payload)";
-    $pdo->prepare($sql)->execute([
+    $params = [
         $tour_id,
         $pax,
         $profit_percent,
@@ -113,7 +118,20 @@ function upsert_tour_costs(PDO $pdo, int $tour_id, array $post): void
         $per_pax,
         $per_day,
         $payload
-    ]);
+    ];
+
+    try {
+        $pdo->prepare($sql)->execute($params);
+    } catch (Throwable $e) {
+        // retry once in case the table was dropped after initial creation
+        try {
+            ensure_tour_costs_table($pdo);
+            $pdo->prepare($sql)->execute($params);
+        } catch (Throwable $inner) {
+            error_log('upsert_tour_costs failed: ' . $inner->getMessage());
+            throw $inner;
+        }
+    }
 }
 
 // --------- Preload dropdown data ---------
