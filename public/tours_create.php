@@ -798,6 +798,54 @@ render_header('เพิ่มโปรแกรมทัวร์');
             <div id="days-wrap"></div>
             <button type="button" class="btn btn-outline-primary btn-sm" id="btnAddDay">+ เพิ่มวัน</button>
 
+            <hr class="my-4">
+
+            <div class="card mb-4" id="costCalcCard">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between flex-wrap gap-2 align-items-start">
+                        <div>
+                            <h5 class="mb-1">คำนวณต้นทุนและราคาขาย</h5>
+                            <p class="text-muted small mb-0">ส่วนคำนวณนี้ใช้สำหรับวางแผนค่าใช้จ่ายตามวันของโปรแกรมและราคาเสนอขาย ข้อมูลจะไม่ถูกบันทึกลงฐานข้อมูล</p>
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="costReset">ล้างค่า</button>
+                    </div>
+
+                    <div class="row g-3 mt-2 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label">จำนวนวันในโปรแกรม</label>
+                            <input type="number" id="costDayCount" class="form-control" min="1" value="1">
+                            <div class="form-text">ดึงจากช่อง "ระยะเวลา" อัตโนมัติ</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">จำนวนผู้เดินทาง (คน)</label>
+                            <input type="number" id="costPax" class="form-control" min="1" value="20">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">กำไรที่ต้องการ (%)</label>
+                            <input type="number" id="profitPercent" class="form-control" min="0" step="0.1" value="15">
+                        </div>
+                    </div>
+
+                    <div class="accordion mt-3" id="costDayAccordion"></div>
+
+                    <div class="mt-4">
+                        <h6 class="mb-2">สรุปต้นทุนตามหมวด</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th scope="col">หมวดค่าใช้จ่าย</th>
+                                        <th scope="col" class="text-end">รวมทั้งหมด (THB)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="costTotalsBody"></tbody>
+                            </table>
+                        </div>
+                        <div class="alert alert-primary mt-3 mb-0" id="costSummaryBox"></div>
+                    </div>
+                </div>
+            </div>
+
             <div class="d-flex justify-content-end mt-4">
                 <button type="submit" class="btn btn-primary">บันทึกโปรแกรมทัวร์</button>
             </div>
@@ -1387,6 +1435,201 @@ render_header('เพิ่มโปรแกรมทัวร์');
         }
         addBtn?.addEventListener('click', () => addDayRow());
         addDayRow(1, ''); // แถวแรก
+
+        // ===== Cost calculator (ต้นทุน/ราคาขาย) =====
+        const costCategories = [
+            { key: 'airfare', label: 'Airfare (ตั๋วเครื่องบิน + Tax + Fuel)' },
+            { key: 'hotel', label: 'Hotel (ห้องพัก + อาหารเช้า + SGL Supp)' },
+            { key: 'transport', label: 'Transport (รถทัวร์ + น้ำมัน + ทางด่วน + OT + คนขับ)' },
+            { key: 'guide', label: 'Guide (ค่าไกด์ + ทิป + ค่าอาหาร)' },
+            { key: 'meals', label: 'Meals (ราคา/หัว/มื้อ)' },
+            { key: 'entrance', label: 'Entrance (สถานที่ทุกจุด)' },
+            { key: 'insurance', label: 'Insurance (ประกันเดินทาง)' },
+            { key: 'documents', label: 'Documents (ป้าย + เอกสารทัวร์)' },
+            { key: 'operating', label: 'Operating (ค่าดำเนินงานบริษัท)' },
+            { key: 'marketing', label: 'Marketing (ค่าโฆษณาและคอมมิชชั่น)' },
+            { key: 'fx', label: 'FX Risk (กันค่าเงิน)' },
+            { key: 'contingency', label: 'Contingency (สำรองฉุกเฉิน)' },
+            { key: 'profit', label: 'Profit (กำไรบริษัท)' }
+        ];
+
+        const costDayCount = document.getElementById('costDayCount');
+        const costPax = document.getElementById('costPax');
+        const profitPercent = document.getElementById('profitPercent');
+        const costAccordion = document.getElementById('costDayAccordion');
+        const costTotalsBody = document.getElementById('costTotalsBody');
+        const costSummaryBox = document.getElementById('costSummaryBox');
+        const costResetBtn = document.getElementById('costReset');
+        const durationInput = document.querySelector('input[name="duration_days"]');
+
+        const formatNumber = (n) => (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        function readCurrentCostState() {
+            const state = {};
+            costAccordion?.querySelectorAll('.cost-input').forEach((input) => {
+                const day = parseInt(input.dataset.day, 10) || 0;
+                const cat = input.dataset.category;
+                const val = parseFloat(input.value) || 0;
+                if (!day || !cat) return;
+                if (!state[day]) state[day] = {};
+                state[day][cat] = val;
+            });
+            return state;
+        }
+
+        function buildCostRows() {
+            if (!costTotalsBody) return;
+            costTotalsBody.innerHTML = '';
+            costCategories.forEach((cat) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+          <th scope="row">${cat.label}</th>
+          <td class="text-end" data-total-cat="${cat.key}">0.00</td>
+        `;
+                costTotalsBody.appendChild(tr);
+            });
+        }
+
+        function createCostDayCard(dayNo) {
+            const card = document.createElement('div');
+            card.className = 'accordion-item mb-2';
+            card.innerHTML = `
+        <h2 class="accordion-header" id="costHead${dayNo}">
+          <button class="accordion-button collapsed d-flex justify-content-between" type="button" data-bs-toggle="collapse" data-bs-target="#costDay${dayNo}" aria-expanded="false" aria-controls="costDay${dayNo}">
+            <span>Day ${dayNo}</span>
+            <span class="badge bg-light text-dark ms-2" data-day-total-badge="${dayNo}">0.00 THB</span>
+          </button>
+        </h2>
+        <div id="costDay${dayNo}" class="accordion-collapse collapse" aria-labelledby="costHead${dayNo}" data-bs-parent="#costDayAccordion">
+          <div class="accordion-body">
+            <div class="row g-3">
+            </div>
+            <div class="text-end small mt-2">รวมวัน Day ${dayNo}: <strong data-day-total="${dayNo}">0.00</strong> THB</div>
+          </div>
+        </div>
+      `;
+
+            const rowWrap = card.querySelector('.row');
+            costCategories.forEach((cat) => {
+                const col = document.createElement('div');
+                col.className = 'col-12 col-md-6 col-lg-4';
+                col.innerHTML = `
+          <label class="form-label">${cat.label}</label>
+          <input type="number" class="form-control form-control-sm cost-input" data-day="${dayNo}" data-category="${cat.key}" min="0" step="0.01" value="0">
+        `;
+                rowWrap?.appendChild(col);
+            });
+            return card;
+        }
+
+        function rebuildCostDays(count) {
+            if (!costAccordion) return;
+            const prev = readCurrentCostState();
+            costAccordion.innerHTML = '';
+            buildCostRows();
+
+            for (let i = 1; i <= count; i++) {
+                const card = createCostDayCard(i);
+                costAccordion.appendChild(card);
+            }
+
+            costAccordion.querySelectorAll('.cost-input').forEach((input) => {
+                const day = parseInt(input.dataset.day, 10);
+                const cat = input.dataset.category;
+                if (prev[day] && typeof prev[day][cat] !== 'undefined') {
+                    input.value = prev[day][cat];
+                }
+            });
+        }
+
+        function recalcCosts() {
+            if (!costAccordion) return;
+            const totalsPerCat = {};
+            const totalsPerDay = {};
+
+            costAccordion.querySelectorAll('.cost-input').forEach((input) => {
+                const cat = input.dataset.category;
+                const day = parseInt(input.dataset.day, 10) || 0;
+                const val = parseFloat(input.value) || 0;
+                if (!cat || !day) return;
+                totalsPerCat[cat] = (totalsPerCat[cat] || 0) + val;
+                totalsPerDay[day] = (totalsPerDay[day] || 0) + val;
+            });
+
+            const baseCost = Object.entries(totalsPerCat)
+                .filter(([k]) => k !== 'profit')
+                .reduce((sum, [, v]) => sum + v, 0);
+            const manualProfit = totalsPerCat.profit || 0;
+            const pax = Math.max(parseInt(costPax?.value || '0', 10), 0) || 0;
+            const dayCount = Math.max(parseInt(costDayCount?.value || '0', 10), 1);
+            const profitRate = Math.max(parseFloat(profitPercent?.value || '0'), 0);
+
+            const profitByPercent = baseCost * (profitRate / 100);
+            const sellingTotal = baseCost + manualProfit + profitByPercent;
+            const perPax = pax > 0 ? sellingTotal / pax : 0;
+            const perDay = dayCount > 0 ? sellingTotal / dayCount : 0;
+
+            // Update totals per category table
+            costTotalsBody?.querySelectorAll('[data-total-cat]').forEach((cell) => {
+                const key = cell.getAttribute('data-total-cat');
+                cell.textContent = formatNumber(totalsPerCat[key] || 0);
+            });
+
+            // Update per-day badges
+            costAccordion.querySelectorAll('[data-day-total]').forEach((el) => {
+                const day = parseInt(el.getAttribute('data-day-total'), 10);
+                el.textContent = formatNumber(totalsPerDay[day] || 0);
+            });
+            costAccordion.querySelectorAll('[data-day-total-badge]').forEach((el) => {
+                const day = parseInt(el.getAttribute('data-day-total-badge'), 10);
+                el.textContent = `${formatNumber(totalsPerDay[day] || 0)} THB`;
+            });
+
+            if (costSummaryBox) {
+                costSummaryBox.innerHTML = `
+          <div><strong>ต้นทุนรวม (ไม่รวมกำไร %):</strong> ${formatNumber(baseCost)} THB</div>
+          <div><strong>กำไรที่กรอกเป็นตัวเลข:</strong> ${formatNumber(manualProfit)} THB</div>
+          <div><strong>กำไรตามเปอร์เซ็นต์:</strong> ${formatNumber(profitByPercent)} THB (${formatNumber(profitRate)}%)</div>
+          <div class="mt-2"><strong>ราคาขายรวมโดยประมาณ:</strong> ${formatNumber(sellingTotal)} THB</div>
+          <div class="small text-muted mb-0">เฉลี่ยต่อคน: ${formatNumber(perPax)} THB • เฉลี่ยต่อวัน: ${formatNumber(perDay)} THB</div>
+        `;
+            }
+        }
+
+        function syncDayCountFromDuration() {
+            if (!durationInput || !costDayCount) return;
+            const n = parseInt(durationInput.value, 10);
+            if (n > 0) costDayCount.value = n;
+        }
+
+        costDayCount?.addEventListener('change', () => {
+            const n = Math.max(parseInt(costDayCount.value, 10) || 1, 1);
+            costDayCount.value = n;
+            rebuildCostDays(n);
+            recalcCosts();
+        });
+        costPax?.addEventListener('input', recalcCosts);
+        profitPercent?.addEventListener('input', recalcCosts);
+        costResetBtn?.addEventListener('click', () => {
+            costAccordion?.querySelectorAll('.cost-input').forEach((input) => {
+                input.value = '0';
+            });
+            recalcCosts();
+        });
+        document.addEventListener('input', (e) => {
+            if (e.target.classList && e.target.classList.contains('cost-input')) recalcCosts();
+        });
+
+        durationInput?.addEventListener('input', () => {
+            syncDayCountFromDuration();
+            const n = Math.max(parseInt(costDayCount?.value || '1', 10), 1);
+            rebuildCostDays(n);
+            recalcCosts();
+        });
+
+        syncDayCountFromDuration();
+        rebuildCostDays(Math.max(parseInt(costDayCount?.value || '1', 10), 1));
+        recalcCosts();
 
         // Toggle sale switch
         const isDirector = <?= can('bypass_confirm') ? 'true' : 'false' ?>;
