@@ -73,7 +73,7 @@ include __DIR__ . '/partials/public_navbar.php';
         <div class="container-fluid py-3">
             <h1 class="display-6 fw-bold">วางแผนเที่ยวกับเรา</h1>
             <p class="col-md-8 fs-5">คัดสรรโปรแกรมทัวร์คุณภาพ ทั้งในประเทศและต่างประเทศ</p>
-            <a class="btn btn-primary btn-lg" href="<?= h($BASE . '/tours.php?scope=domestic') ?>">ดูทัวร์ในประเทศ</a>
+            <a class="btn btn-success btn-lg" href="<?= h($BASE . '/tours.php?scope=domestic') ?>">Inbound Tours</a>
         </div>
     </div>
 
