@@ -39,7 +39,30 @@ function reindex_day_no(PDO $pdo, int $tour_id): void
     }
 }
 
-// -------- Helper: upsert cost breakdown --------
+// -------- Helper: ensure cost table + upsert cost breakdown --------
+function ensure_tour_costs_table(PDO $pdo): void
+{
+    $sql = "CREATE TABLE IF NOT EXISTS tour_costs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tour_id INT NOT NULL UNIQUE,
+        pax INT NOT NULL DEFAULT 0,
+        profit_percent DECIMAL(10,2) NOT NULL DEFAULT 0,
+        day_count INT NOT NULL DEFAULT 1,
+        base_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+        manual_profit DECIMAL(12,2) NOT NULL DEFAULT 0,
+        percent_profit_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        selling_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        per_pax DECIMAL(12,2) NOT NULL DEFAULT 0,
+        per_day DECIMAL(12,2) NOT NULL DEFAULT 0,
+        payload JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (tour_id) REFERENCES tours(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+    $pdo->exec($sql);
+}
+
 function upsert_tour_costs(PDO $pdo, int $tour_id, array $post): void
 {
     $hasCostFields = false;
@@ -50,6 +73,8 @@ function upsert_tour_costs(PDO $pdo, int $tour_id, array $post): void
         }
     }
     if (!$hasCostFields) return;
+
+    ensure_tour_costs_table($pdo);
 
     $payload = trim($post['cost_payload'] ?? '') ?: null;
     $pax = max(0, (int)($post['cost_pax'] ?? 0));
@@ -256,7 +281,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
         try {
             upsert_tour_costs($pdo, $tour_id, $_POST);
         } catch (Throwable $e) {
-            // ไม่ต้องหยุดการสร้างโปรแกรมถ้าคำนวณไม่ถูกต้อง
+            error_log('upsert_tour_costs(create) failed: ' . $e->getMessage());
         }
 
         audit_log('tour_create', 'tours', $tour_id, [
@@ -402,7 +427,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit'
         try {
             upsert_tour_costs($pdo, $id, $_POST);
         } catch (Throwable $e) {
-            // ข้ามหากข้อมูลไม่ครบถ้วน
+            error_log('upsert_tour_costs(edit) failed: ' . $e->getMessage());
         }
 
         $info = 'แก้ไขโปรแกรมทัวร์สำเร็จ';
