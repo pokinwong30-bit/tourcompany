@@ -31,7 +31,7 @@ define('APP_DEBUG', env_bool('APP_DEBUG', APP_ENV !== 'production'));
 define('APP_URL',   env('APP_URL', ''));
 
 // คำนวณ BASE_URL จาก path ของ APP_URL ถ้ามี; ไม่งั้นใช้ค่าที่คุณต้องการเองได้
-$__base_url = '/tour-company/public'; // ค่า fallback ของคุณ
+$__base_url = '/tourcompany/public'; // ค่า fallback ของคุณ
 if (APP_URL) {
     $parts = @parse_url(APP_URL);
     if (!empty($parts['path'])) {
