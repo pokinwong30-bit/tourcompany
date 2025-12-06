@@ -1,0 +1,22 @@
+iata,icao,name,country_iso2
+TG,THA,Thai Airways,TH
+FD,AIQ,Thai AirAsia,TH
+SL,TLM,Thai Lion Air,TH
+SQ,SIA,Singapore Airlines,SG
+MH,MAS,Malaysia Airlines,MY
+VN,HVN,Vietnam Airlines,VN
+GA,GIA,Garuda Indonesia,ID
+JL,JAL,Japan Airlines,JP
+NH,ANA,All Nippon Airways,JP
+QF,QFA,Qantas,AU
+EK,UAE,Emirates,AE
+BA,BAW,British Airways,GB
+AF,AFR,Air France,FR
+LH,DLH,Lufthansa,DE
+DL,DAL,Delta Air Lines,US
+UA,UAL,United Airlines,US
+AA,AAL,American Airlines,US
+KE,KAL,Korean Air,KR
+OZ,AAR,Asiana Airlines,KR
+AI,AIC,Air India,IN
+6E,IGO,IndiGo,IN

@@ -1,0 +1,32 @@
+iata,icao,name,country_iso2,city_name_en
+BKK,VTBS,Suvarnabhumi Airport,TH,Bangkok
+DMK,VTBD,Don Mueang International Airport,TH,Bangkok
+HKT,VTSP,Phuket International Airport,TH,Phuket
+CNX,VTCC,Chiang Mai International Airport,TH,Chiang Mai
+HND,RJTT,Tokyo Haneda Airport,JP,Tokyo
+NRT,RJAA,Narita International Airport,JP,Tokyo
+KIX,RJBB,Kansai International Airport,JP,Osaka
+CDG,LFPG,Charles de Gaulle Airport,FR,Paris
+ORY,LFPO,Paris Orly Airport,FR,Paris
+LHR,EGLL,London Heathrow Airport,GB,London
+LGW,EGKK,London Gatwick Airport,GB,London
+FRA,EDDF,Frankfurt Airport,DE,Frankfurt
+MUC,EDDM,Munich Airport,DE,Munich
+SIN,WSSS,Singapore Changi Airport,SG,Singapore
+KUL,WMKK,Kuala Lumpur International Airport,MY,Kuala Lumpur
+HAN,VVNB,Noi Bai International Airport,VN,Hanoi
+SGN,VVTS,Tan Son Nhat International Airport,VN,Ho Chi Minh City
+VTE,VLVT,Wattay International Airport,LA,Vientiane
+PNH,VDPP,Phnom Penh International Airport,KH,Phnom Penh
+CGK,WIII,Soekarno–Hatta International Airport,ID,Jakarta
+DPS,WADD,Ngurah Rai International Airport,ID,Bali
+SYD,YSSY,Sydney Kingsford Smith Airport,AU,Sydney
+MEL,YMML,Melbourne Airport,AU,Melbourne
+DXB,OMDB,Dubai International Airport,AE,Dubai
+AUH,OMAA,Abu Dhabi International Airport,AE,Abu Dhabi
+DEL,VIDP,Indira Gandhi International Airport,IN,Delhi
+BOM,VABB,Chhatrapati Shivaji Maharaj International Airport,IN,Mumbai
+ICN,RKSI,Incheon International Airport,KR,Seoul
+GMP,RKSS,Gimpo International Airport,KR,Seoul
+JFK,KJFK,John F. Kennedy International Airport,US,New York
+LAX,KLAX,Los Angeles International Airport,US,Los Angeles
