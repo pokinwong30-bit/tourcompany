@@ -139,6 +139,16 @@ $countries = $pdo->query("SELECT id, COALESCE(name_th,name_en) AS name, name_en 
 $airlines  = $pdo->query("SELECT id, name, iata FROM airlines ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $airports  = $pdo->query("SELECT id, name, iata FROM airports ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
+// หา ID ประเทศไทยสำหรับใช้ล็อกใน Domestic / Inbound
+$thailand_id = null;
+foreach ($countries as $c) {
+    $nameLower = mb_strtolower($c['name'] ?? '');
+    if (in_array($nameLower, ['thailand', 'ไทย', 'ราชอาณาจักรไทย'], true)) {
+        $thailand_id = (int)$c['id'];
+        break;
+    }
+}
+
 /* ====================== TOGGLE SALE (เปิด/ปิดขาย) ====================== */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'toggle_sale') {
     csrf_validate();
@@ -180,13 +190,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     $price = (float)($_POST['price'] ?? 0);
     $tour_type = $_POST['tour_type'] ?? 'group';
 
+    // ตลาดทัวร์: domestic / inbound / outbound
+    $market_type = $_POST['market_type'] ?? 'outbound';
+    if (!in_array($market_type, ['domestic', 'inbound', 'outbound'], true)) {
+        $market_type = 'outbound';
+    }
+
+    // หากเป็น Domestic หรือ Inbound และรู้ id ประเทศไทย -> ล็อกประเทศเป็นไทยในฝั่ง server
+    if (in_array($market_type, ['domestic', 'inbound'], true) && $thailand_id) {
+        $country_id = $thailand_id;
+    }
+
     if ($code === '') $errors[] = 'กรอกรหัสทัวร์';
     if ($name === '') $errors[] = 'กรอกชื่อโปรแกรมทัวร์';
     if ($country_id <= 0) $errors[] = 'เลือกประเทศ';
     if ($travel_window === '') $errors[] = 'กรอกช่วงเวลาเดินทาง (ข้อความ)';
     if ($duration_days <= 0) $errors[] = 'ระยะเวลาไม่ถูกต้อง';
-    if ($origin_airport_id <= 0 || $dest_airport_id <= 0) $errors[] = 'เลือกสนามบินต้นทาง/ปลายทาง';
     if (!in_array($tour_type, ['group', 'private'], true)) $tour_type = 'group';
+
+    // Validation สนามบินตามประเภทตลาด
+    if ($market_type === 'outbound') {
+        // Outbound: ต้องมีต้นทาง/ปลายทางชัดเจน
+        if ($origin_airport_id <= 0 || $dest_airport_id <= 0) {
+            $errors[] = 'ทัวร์ Outbound ต้องเลือกสนามบินต้นทางและปลายทาง';
+        }
+    } else {
+        // Domestic / Inbound: สนามบินไม่บังคับ แต่ถ้ากรอกต้องครบทั้งคู่
+        if (($origin_airport_id > 0 && $dest_airport_id <= 0) || ($origin_airport_id <= 0 && $dest_airport_id > 0)) {
+            $errors[] = 'หากระบุสนามบิน ต้องกรอกทั้งต้นทางและปลายทางให้ครบ';
+        }
+    }
 
     // โลโก้สายการบิน
     $airline_logo_path = null;
@@ -263,8 +296,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
 
     if (!$errors) {
         $stmt = $pdo->prepare("INSERT INTO tours
-            (code,name,long_description,country_id,city_id,airline_id,airline_logo_path,depart_date,travel_window,duration_days,origin_airport_id,dest_airport_id,price,tour_type,pdf_path,is_on_sale,cover_image_path,created_by)
-            VALUES (?,?,?, ?,?, ?,?, NULL, ?,?,?,?,?,?, ?, 1, ?, ?)");
+            (code,name,long_description,country_id,city_id,airline_id,airline_logo_path,depart_date,travel_window,duration_days,origin_airport_id,dest_airport_id,price,tour_type,market_type,pdf_path,is_on_sale,cover_image_path,created_by)
+            VALUES (?,?,?, ?,?, ?,?, NULL, ?,?,?,?,?,?, ?, ?, 1, ?, ?)");
         $stmt->execute([
             $code,
             $name,
@@ -275,10 +308,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
             $airline_logo_path,
             $travel_window,
             $duration_days,
-            $origin_airport_id,
-            $dest_airport_id,
+            $origin_airport_id ?: null,
+            $dest_airport_id ?: null,
             $price,
             $tour_type,
+            $market_type,
             $pdf_path,
             $cover_image_path,
             current_user()['id']
@@ -332,14 +366,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit'
     $price = (float)($_POST['price'] ?? 0);
     $tour_type = $_POST['tour_type'] ?? 'group';
 
+    $market_type = $_POST['market_type'] ?? 'outbound';
+    if (!in_array($market_type, ['domestic', 'inbound', 'outbound'], true)) {
+        $market_type = 'outbound';
+    }
+
+    // ถ้าเลือก domestic / inbound ระหว่างแก้ไข -> บังคับประเทศเป็นไทย
+    if (in_array($market_type, ['domestic', 'inbound'], true) && $thailand_id) {
+        $country_id = $thailand_id;
+    }
+
     if ($id <= 0) $errors[] = 'ทัวร์ไม่ถูกต้อง';
     if ($code === '') $errors[] = 'กรอกรหัสทัวร์';
     if ($name === '') $errors[] = 'กรอกชื่อโปรแกรมทัวร์';
     if ($country_id <= 0) $errors[] = 'เลือกประเทศ';
     if ($travel_window === '') $errors[] = 'กรอกช่วงเวลาเดินทาง (ข้อความ)';
     if ($duration_days <= 0) $errors[] = 'ระยะเวลาไม่ถูกต้อง';
-    if ($origin_airport_id <= 0 || $dest_airport_id <= 0) $errors[] = 'เลือกสนามบินต้นทาง/ปลายทาง';
     if (!in_array($tour_type, ['group', 'private'], true)) $tour_type = 'group';
+
+    // Validation สนามบินตามตลาด
+    if ($market_type === 'outbound') {
+        if ($origin_airport_id <= 0 || $dest_airport_id <= 0) {
+            $errors[] = 'ทัวร์ Outbound ต้องเลือกสนามบินต้นทางและปลายทาง';
+        }
+    } else {
+        if (($origin_airport_id > 0 && $dest_airport_id <= 0) || ($origin_airport_id <= 0 && $dest_airport_id > 0)) {
+            $errors[] = 'หากระบุสนามบิน ต้องกรอกทั้งต้นทางและปลายทางให้ครบ';
+        }
+    }
 
     // อัปเดตฟิลด์หลัก
     $sets = [];
@@ -353,10 +407,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit'
         'airline_id' => $airline_id ?: null,
         'travel_window' => $travel_window,
         'duration_days' => $duration_days,
-        'origin_airport_id' => $origin_airport_id,
-        'dest_airport_id' => $dest_airport_id,
+        'origin_airport_id' => $origin_airport_id ?: null,
+        'dest_airport_id' => $dest_airport_id ?: null,
         'price' => $price,
-        'tour_type' => $tour_type
+        'tour_type' => $tour_type,
+        'market_type' => $market_type
     ];
     foreach ($fields as $k => $v) {
         $sets[] = "$k=?";
@@ -681,9 +736,9 @@ $total = (int)$pdo->query("SELECT COUNT(*) FROM tours")->fetchColumn();
 $total_pages = max(1, (int)ceil($total / $per_page));
 
 $stmt = $pdo->prepare("
-    SELECT t.*, 
-           COALESCE(cn.name_th, cn.name_en) AS country_name,
-           COALESCE(ci.name_th, ci.name_en) AS city_name,
+     SELECT t.*, 
+           COALESCE(cn.name_th,cn.name_en) AS country_name,
+           COALESCE(ci.name_th,ci.name_en) AS city_name,
            al.name AS airline_name, al.iata AS airline_iata,
            ap1.name AS origin_name, ap1.iata AS origin_iata,
            ap2.name AS dest_name,   ap2.iata AS dest_iata
@@ -764,16 +819,12 @@ render_header('เพิ่มโปรแกรมทัวร์');
     /* ปรับขนาดปุ่ม/บรรทัด กันตัวอักษรชนและซ้อนกัน โดยเฉพาะฟอนต์ไทย */
     .pagination .page-link {
         line-height: 1.4;
-        /* กันตัวอักษรไทยซ้อน */
         padding: .6rem .9rem;
-        /* เพิ่มความสูง/กว้างให้กดง่าย */
         min-width: 44px;
-        /* มาตรฐาน touch target */
     }
 
     .pagination {
         row-gap: .5rem;
-        /* เผื่อกรณีขึ้นหลายบรรทัดให้มีช่องไฟแนวตั้ง */
     }
 </style>
 
@@ -842,7 +893,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">สนามบินต้นทาง</label>
-                    <select name="origin_airport_id" class="form-select" required>
+                    <select name="origin_airport_id" class="form-select">
                         <option value="">-- เลือกสนามบิน --</option>
                         <?php foreach ($airports as $ap): ?>
                             <option value="<?= $ap['id'] ?>"><?= htmlspecialchars($ap['name']) ?><?= $ap['iata'] ? ' (' . $ap['iata'] . ')' : '' ?></option>
@@ -851,12 +902,15 @@ render_header('เพิ่มโปรแกรมทัวร์');
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">สนามบินปลายทาง</label>
-                    <select name="dest_airport_id" class="form-select" required>
+                    <select name="dest_airport_id" class="form-select">
                         <option value="">-- เลือกสนามบิน --</option>
                         <?php foreach ($airports as $ap): ?>
                             <option value="<?= $ap['id'] ?>"><?= htmlspecialchars($ap['name']) ?><?= $ap['iata'] ? ' (' . $ap['iata'] . ')' : '' ?></option>
                         <?php endforeach; ?>
                     </select>
+                    <div class="form-text" id="airportHelpText">
+                        ทัวร์ Outbound: ต้องเลือกสนามบินต้นทางและปลายทาง
+                    </div>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">ราคาทัวร์ (THB)</label>
@@ -875,6 +929,25 @@ render_header('เพิ่มโปรแกรมทัวร์');
                             <label class="form-check-label" for="tt2">Private</label>
                         </div>
                     </div>
+                </div>
+
+                <div class="col-md-4">
+                    <label class="form-label">ตลาดทัวร์</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="market_type" value="domestic" id="mk_domestic">
+                            <label class="form-check-label" for="mk_domestic">Domestic (คนไทยเที่ยวไทย)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="market_type" value="inbound" id="mk_inbound">
+                            <label class="form-check-label" for="mk_inbound">Inbound (ต่างชาติเที่ยวไทย)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="market_type" value="outbound" id="mk_outbound" checked>
+                            <label class="form-check-label" for="mk_outbound">Outbound (คนไทยเที่ยวต่างประเทศ)</label>
+                        </div>
+                    </div>
+                    <div class="form-text">ใช้แยกรีพอร์ต และกำหนดเงื่อนไขสนามบินอัตโนมัติ</div>
                 </div>
 
                 <div class="col-md-4">
@@ -1000,6 +1073,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                         <th>สายการบิน</th>
                         <th>ราคา</th>
                         <th>ประเภท</th>
+                        <th>ตลาด</th>
                         <th>ขาย?</th>
                         <th>จัดการ</th>
                     </tr>
@@ -1034,6 +1108,18 @@ render_header('เพิ่มโปรแกรมทัวร์');
                             <td><?= number_format((float)$t['price'], 2) ?></td>
                             <td><span class="badge bg-<?= $t['tour_type'] === 'group' ? 'primary' : 'success' ?>"><?= htmlspecialchars(ucfirst($t['tour_type'])) ?></span></td>
                             <td>
+                                <?php
+                                $market = $t['market_type'] ?? 'outbound';
+                                if ($market === 'domestic') {
+                                    echo '<span class="badge bg-warning text-dark">Domestic</span>';
+                                } elseif ($market === 'inbound') {
+                                    echo '<span class="badge bg-info text-dark">Inbound</span>';
+                                } else {
+                                    echo '<span class="badge bg-secondary">Outbound</span>';
+                                }
+                                ?>
+                            </td>
+                            <td>
                                 <form method="post" class="d-inline toggle-sale-form" id="tsf-<?= (int)$t['id'] ?>">
                                     <?= csrf_field() ?>
                                     <input type="hidden" name="action" value="toggle_sale">
@@ -1055,7 +1141,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                     <?php endforeach; ?>
                     <?php if (!$tours): ?>
                         <tr>
-                            <td colspan="12" class="text-center text-muted py-4">ยังไม่มีข้อมูล</td>
+                            <td colspan="13" class="text-center text-muted py-4">ยังไม่มีข้อมูล</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -1107,6 +1193,18 @@ render_header('เพิ่มโปรแกรมทัวร์');
     $deps = $pdo->prepare("SELECT id, start_date, end_date, capacity, price FROM tour_departures WHERE tour_id=? ORDER BY start_date ASC, id ASC");
     $deps->execute([$t['id']]);
     $deprows = $deps->fetchAll(PDO::FETCH_ASSOC);
+
+    $market = $t['market_type'] ?? 'outbound';
+    $marketLabel = $market === 'domestic'
+        ? 'Domestic (คนไทยเที่ยวไทย)'
+        : ($market === 'inbound'
+            ? 'Inbound (ต่างชาติเที่ยวไทย)'
+            : 'Outbound (คนไทยเที่ยวต่างประเทศ)');
+    $marketClass = $market === 'domestic'
+        ? 'bg-warning text-dark'
+        : ($market === 'inbound'
+            ? 'bg-info text-dark'
+            : 'bg-secondary');
     ?>
 
     <!-- Departure Modal -->
@@ -1156,7 +1254,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                                                     data-target="#depStatus<?= (int)$d['id'] ?>"
                                                     value="<?= (int)$d['capacity'] ?>">
                                             </td>
-                                            <td id="depStatus<?= (int)$d['id'] ?>"> <!-- คอลัมน์สถานะ (ใหม่) -->
+                                            <td id="depStatus<?= (int)$d['id'] ?>">
                                                 <?php if ((int)$d['capacity'] <= 0): ?>
                                                     <span class="badge bg-warning text-dark">เต็ม</span>
                                                 <?php endif; ?>
@@ -1209,7 +1307,6 @@ render_header('เพิ่มโปรแกรมทัวร์');
                                         <th style="min-width:150px">สิ้นสุด</th>
                                         <th class="text-end" style="min-width:120px">จำนวนรับ</th>
                                         <th class="text-end" style="min-width:140px">ราคา (THB)</th>
-
                                         <th style="width:70px"></th>
                                     </tr>
                                 </thead>
@@ -1236,7 +1333,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
         </div>
     </div>
 
-    <!-- Tour Detail Modal (ของเดิม) -->
+    <!-- Tour Detail Modal -->
     <div class="modal fade" id="tourModal<?= (int)$t['id'] ?>" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-xl modal-dialog-scrollable">
             <div class="modal-content">
@@ -1244,6 +1341,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                     <h5 class="modal-title">
                         รายละเอียดโปรแกรม • <?= htmlspecialchars($t['code']) ?> — <?= htmlspecialchars($t['name'] ?: '-') ?>
                         <span class="badge bg-<?= $t['tour_type'] === 'group' ? 'primary' : 'success' ?> ms-2"><?= htmlspecialchars(ucfirst($t['tour_type'])) ?></span>
+                        <span class="badge <?= $marketClass ?> ms-1"><?= htmlspecialchars($marketLabel) ?></span>
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -1259,6 +1357,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                                 <?php endif; ?>
                             </div>
                             <div class="mb-2"><strong>ชื่อโปรแกรม:</strong> <?= htmlspecialchars($t['name'] ?: '-') ?></div>
+                            <div class="mb-2"><strong>ตลาด:</strong> <?= htmlspecialchars($marketLabel) ?></div>
                             <div class="mb-2"><strong>ประเทศ/เมือง:</strong> <?= htmlspecialchars($t['country_name'] ?: '-') ?><?= $t['city_name'] ? ' • ' . htmlspecialchars($t['city_name']) : '' ?></div>
                             <div class="mb-2"><strong>ช่วงเวลาเดินทาง:</strong> <?= htmlspecialchars($t['travel_window']) ?> • <strong>ระยะเวลา:</strong> <?= (int)$t['duration_days'] ?> วัน</div>
                             <div class="mb-2"><strong>สายการบิน:</strong> <?= htmlspecialchars(trim(($t['airline_name'] ?: '-') . ' ' . ($t['airline_iata'] ? '(' . $t['airline_iata'] . ')' : ''))) ?></div>
@@ -1286,8 +1385,6 @@ render_header('เพิ่มโปรแกรมทัวร์');
                             <?php else: ?>
                                 <div class="text-muted">ไม่มีรูปปก</div>
                             <?php endif; ?>
-
-
                         </div>
                     </div>
 
@@ -1431,7 +1528,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
 
                                 <div class="col-md-4">
                                     <label class="form-label">สนามบินต้นทาง</label>
-                                    <select name="origin_airport_id" class="form-select" required>
+                                    <select name="origin_airport_id" class="form-select">
                                         <?php foreach ($airports as $ap): ?>
                                             <option value="<?= $ap['id'] ?>" <?= (int)$ap['id'] === (int)$t['origin_airport_id'] ? 'selected' : '' ?>><?= htmlspecialchars($ap['name']) ?><?= $ap['iata'] ? ' (' . $ap['iata'] . ')' : '' ?></option>
                                         <?php endforeach; ?>
@@ -1439,7 +1536,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                                 </div>
                                 <div class="col-md-4">
                                     <label class="form-label">สนามบินปลายทาง</label>
-                                    <select name="dest_airport_id" class="form-select" required>
+                                    <select name="dest_airport_id" class="form-select">
                                         <?php foreach ($airports as $ap): ?>
                                             <option value="<?= $ap['id'] ?>" <?= (int)$ap['id'] === (int)$t['dest_airport_id'] ? 'selected' : '' ?>><?= htmlspecialchars($ap['name']) ?><?= $ap['iata'] ? ' (' . $ap['iata'] . ')' : '' ?></option>
                                         <?php endforeach; ?>
@@ -1456,6 +1553,15 @@ render_header('เพิ่มโปรแกรมทัวร์');
                                     <select name="tour_type" class="form-select">
                                         <option value="group" <?= $t['tour_type'] === 'group' ? 'selected' : '' ?>>Group</option>
                                         <option value="private" <?= $t['tour_type'] === 'private' ? 'selected' : '' ?>>Private</option>
+                                    </select>
+                                </div>
+
+                                <div class="col-md-3">
+                                    <label class="form-label">ตลาดทัวร์</label>
+                                    <select name="market_type" class="form-select">
+                                        <option value="domestic" <?= ($t['market_type'] ?? 'outbound') === 'domestic' ? 'selected' : '' ?>>Domestic – คนไทยเที่ยวไทย</option>
+                                        <option value="inbound" <?= ($t['market_type'] ?? 'outbound') === 'inbound' ? 'selected' : '' ?>>Inbound – ต่างชาติเที่ยวไทย</option>
+                                        <option value="outbound" <?= ($t['market_type'] ?? 'outbound') === 'outbound' ? 'selected' : '' ?>>Outbound – คนไทยเที่ยวต่างประเทศ</option>
                                     </select>
                                 </div>
 
@@ -1518,6 +1624,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
         const city = document.getElementById('city');
         country?.addEventListener('change', async () => {
             const cid = country.value || '';
+            if (!city) return;
             city.innerHTML = '<option value="">-- เลือกเมือง --</option>';
             if (!cid) return;
             const res = await fetch('<?= BASE_URL ?>/api/cities.php?country_id=' + encodeURIComponent(cid));
@@ -1528,6 +1635,61 @@ render_header('เพิ่มโปรแกรมทัวร์');
                 opt.textContent = i.name_th || i.name_en;
                 city.appendChild(opt);
             }
+        });
+
+        // Lock ประเทศไทย + ช่วยอธิบายสนามบิน ตาม market_type
+        const marketRadios = document.querySelectorAll('input[name="market_type"]');
+        const THAILAND_ID = <?= $thailand_id ? (int)$thailand_id : 'null' ?>;
+        const airportHelp = document.getElementById('airportHelpText');
+        const originAirport = document.querySelector('select[name="origin_airport_id"]');
+        const destAirport = document.querySelector('select[name="dest_airport_id"]');
+
+        function getMarketValue() {
+            const checked = document.querySelector('input[name="market_type"]:checked');
+            return checked ? checked.value : 'outbound';
+        }
+
+        function applyMarketCountryLock() {
+            if (!country || !THAILAND_ID) return;
+            const val = getMarketValue();
+            if (val === 'domestic' || val === 'inbound') {
+                if (String(country.value) !== String(THAILAND_ID)) {
+                    country.value = String(THAILAND_ID);
+                    country.dispatchEvent(new Event('change'));
+                }
+            }
+        }
+
+        function applyAirportRequired() {
+            if (!originAirport || !destAirport) return;
+            const val = getMarketValue();
+            if (val === 'outbound') {
+                originAirport.setAttribute('required', 'required');
+                destAirport.setAttribute('required', 'required');
+            } else {
+                originAirport.removeAttribute('required');
+                destAirport.removeAttribute('required');
+            }
+        }
+
+        function updateAirportHelp() {
+            if (!airportHelp) return;
+            const val = getMarketValue();
+            if (val === 'outbound') {
+                airportHelp.textContent = 'ทัวร์ Outbound: ต้องเลือกสนามบินต้นทาง (ออกจากไทย) และปลายทาง (ประเทศปลายทาง)';
+            } else if (val === 'inbound') {
+                airportHelp.textContent = 'ทัวร์ Inbound: สนามบินเป็นตัวเลือก (ส่วนใหญ่ Land only) แต่ถ้ามีไฟลต์ภายในไทยแนะนำให้กรอกเพื่ออ้างอิง';
+            } else {
+                airportHelp.textContent = 'ทัวร์ Domestic: อาจไม่ใช้สนามบิน (รถทัวร์/รถไฟ) หากมีไฟลต์ภายในประเทศสามารถกรอกต้นทาง/ปลายทางได้';
+            }
+        }
+
+        marketRadios.forEach(r => {
+            r.addEventListener('change', () => {
+                applyMarketCountryLock();
+                applyAirportRequired();
+                updateAirportHelp();
+            });
         });
 
         // Day-by-day dynamic (ฟอร์มสร้างทัวร์)
@@ -1786,6 +1948,10 @@ render_header('เพิ่มโปรแกรมทัวร์');
             recalcCosts();
         });
 
+        // เรียกครั้งแรกตอนโหลดหน้า
+        applyMarketCountryLock();
+        applyAirportRequired();
+        updateAirportHelp();
         syncDayCountFromDuration();
         rebuildCostDays(Math.max(parseInt(costDayCount?.value || '1', 10), 1));
         recalcCosts();
@@ -1811,7 +1977,7 @@ render_header('เพิ่มโปรแกรมทัวร์');
                     if (secretInput) secretInput.value = pass;
                 }
 
-                form.submit(); // รีเฟรชเพื่ออัปเดต
+                form.submit();
             });
         });
     })();
@@ -1850,6 +2016,22 @@ render_header('เพิ่มโปรแกรมทัวร์');
         }
         return true;
     }
+
+    // อัปเดต badge "เต็ม" ทันทีเมื่อแก้จำนวนรับในตารางรายการรอบ
+    document.addEventListener('input', function(e) {
+        const el = e.target;
+        if (!el.classList || !el.classList.contains('dep-cap')) return;
+        const targetSel = el.getAttribute('data-target');
+        const box = targetSel ? document.querySelector(targetSel) : null;
+        if (!box) return;
+
+        const n = parseInt(el.value, 10);
+        if (!isNaN(n) && n <= 0) {
+            box.innerHTML = '<span class="badge bg-warning text-dark">เต็ม</span>';
+        } else {
+            box.innerHTML = '';
+        }
+    });
 </script>
 
 <?php if ($autoOpenModalTourId): ?>
@@ -1873,22 +2055,5 @@ render_header('เพิ่มโปรแกรมทัวร์');
         });
     </script>
 <?php endif; ?>
-<script>
-    // อัปเดต badge "เต็ม" ทันทีเมื่อแก้จำนวนรับในตารางรายการรอบ
-    document.addEventListener('input', function(e) {
-        const el = e.target;
-        if (!el.classList || !el.classList.contains('dep-cap')) return;
-        const targetSel = el.getAttribute('data-target');
-        const box = targetSel ? document.querySelector(targetSel) : null;
-        if (!box) return;
-
-        const n = parseInt(el.value, 10);
-        if (!isNaN(n) && n <= 0) {
-            box.innerHTML = '<span class="badge bg-warning text-dark">เต็ม</span>';
-        } else {
-            box.innerHTML = '';
-        }
-    });
-</script>
 
 <?php render_footer(); ?>
